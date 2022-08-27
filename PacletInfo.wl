@@ -1,5 +1,3 @@
-(* ::Package:: *)
-
 PacletObject[
   <|
     "Name" -> "Wolfram/Patterns",
@@ -7,7 +5,7 @@ PacletObject[
     "Creator" -> "Nikolay Murzin",
     "License" -> "MIT",
     "PublisherID" -> "Wolfram",
-    "Version" -> "1.0",
+    "Version" -> "0.0.2",
     "WolframVersion" -> "13.1+",
     "Extensions" -> {
       {
@@ -15,18 +13,23 @@ PacletObject[
         "Root" -> "Kernel",
         "Context" -> {{"Wolfram`Patterns`", "Patterns.wl"}},
         "Symbols" -> {
-          "Wolfram`Patterns`SubstitutionSum",
-          "Wolfram`Patterns`SubstitutionProduct",
-          "Wolfram`Patterns`PartSubstitution",
-          "Wolfram`Patterns`SubstitutionValues",
-          "Wolfram`Patterns`PatternSubstitutions",
-          "Wolfram`Patterns`SubstitutionBindings",
-          "Wolfram`Patterns`FindPatternInstance",
-          "Wolfram`Patterns`SubstitutionMatchQ",
-          "Wolfram`Patterns`SubstitutionReplace",
-          "Wolfram`Patterns`SubstitutionReplaceAll",
-          "Wolfram`Patterns`SubstitutionReplaceList",
-          "Wolfram`Patterns`SubstitutionPosition"
+          "Wolfram`Patterns`MatchSum",
+          "Wolfram`Patterns`MatchProduct",
+          "Wolfram`Patterns`MatchPart",
+          "Wolfram`Patterns`MatchValues",
+          "Wolfram`Patterns`PatternMatch",
+
+          "Wolfram`Patterns`MatchBindings",
+          "Wolfram`Patterns`MatchApply",
+          "Wolfram`Patterns`MatchExpand",
+
+          "Wolfram`Patterns`PatternMatchQ",
+          "Wolfram`Patterns`MatchReplace",
+          "Wolfram`Patterns`MatchReplaceAll",
+          "Wolfram`Patterns`MatchReplaceList",
+          "Wolfram`Patterns`MatchPosition",
+
+          "Wolfram`Patterns`FindPatternInstance"
         }
       },
       {"Documentation", "Language" -> "English"}
