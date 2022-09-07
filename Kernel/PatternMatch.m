@@ -3,11 +3,10 @@ Package["Wolfram`Patterns`"]
 PackageImport["Wolfram`Lazy`"]
 
 PackageExport["PatternMatch"]
-PackageExport["SequenceSplits"]
-PackageExport["ShortestTriples"]
-PackageExport["LongestTriples"]
-PackageExport["ShiftPatternMatch"]
-PackageExport["MapMatchPart"]
+PackageExport["AlternativesSequence"]
+PackageExport["DefaultAlternatives"]
+PackageExport["DefaultAlternativesSequence"]
+PackageExport["NameValuePattern"]
 
 
 
@@ -37,6 +36,7 @@ LongestTriples[xs_] := ToLazyList[
 
 
 MapMatchPart[f_, matches : _MatchSum | _MatchProduct] := LazyMap[MapMatchPart[f, #] &, matches]
+MapMatchPart[f_, match : MatchPart[{}, p_, m_]] := f[MatchPart[{}, p, MapMatchPart[f, m]]]
 MapMatchPart[f_, match_MatchPart] := f[match]
 MapMatchPart[_, match_MatchValues] := match
 MapMatchPart[f_, LazyValue[v_]] := MapMatchPart[f, v]
@@ -47,173 +47,89 @@ MapMatchValues[f_, match_MatchValues] := f[match]
 MapMatchValues[f_, LazyValue[v_]] := MapMatchValues[f, v]
 
 
-flattenIdentities[expr_] := FlattenAt[expr, Position[expr, _[_], {1}, Heads -> False]]
+FlattenIdentities[expr_] := FlattenAt[expr, Position[expr, _[_], {1}, Heads -> False]]
 
 
-ShiftPatternMatch[seq_HoldComplete, head_Symbol[patt___], shift : _Integer ? NonNegative : 0, drop : True | False : False] := With[{
+patternMatchShift[seq_HoldComplete, head_Symbol[patt___], shift : _Integer ? NonNegative : 0, drop : True | False : False] := With[{
     val = Unevaluated @@ head @@@ HoldComplete[seq]
 },
     MapMatchPart[
         Replace[{
             MatchPart[{0, ___}, ___] :> MatchProduct[],
+            MatchPart[{}, _, m_] :> m,
             If[ drop,
                 MatchPart[{_, ps___}, rest___] :> MatchPart[{ps}, rest],
                 If[shift > 0, MatchPart[{p_, ps___}, rest___] :> MatchPart[{p + shift, ps}, rest], Nothing]
             ]
         }],
-        PatternMatch[val, Unevaluated[head[patt]]]
+        patternMatch[val, Unevaluated[head[patt]]]
     ]
 ]
 
 
 (* PatternMatch *)
 
+SetAttributes[patternMatch, SequenceHold]
 SetAttributes[PatternMatch, SequenceHold]
 
-Off[Pattern::patv]
+
+patternMatch[Sequence[args___], Sequence[patt___]] :=
+    MatchPart[{}, HoldPattern[PatternSequence[patt]], patternMatch[HoldComplete[args], HoldComplete[patt]]]
 
 
 (* OneIdentity *)
 
-PatternMatch[expr : Except[head_Symbol[___]], head_Symbol[patt___]] /; MemberQ[Attributes[head], OneIdentity] :=
-    PatternMatch[Unevaluated[head[expr]], Unevaluated[head[patt]]]
+patternMatch[expr : Except[head_Symbol[___]], head_Symbol[patt___]] /; MemberQ[Attributes[head], OneIdentity] :=
+    patternMatch[Unevaluated[head[expr]], Unevaluated[head[patt]]]
 
 
 (* Orderless *)
 
-PatternMatch[head_Symbol[args___], head_Symbol[patt___]] /;
+patternMatch[head_Symbol[args___], head_Symbol[patt___]] /;
     Not[Length[Unevaluated[{patt}]] == 1 && Head[Unevaluated[patt]] === OrderlessPatternSequence] && MemberQ[Attributes[head], Orderless] :=
     Module[{h},
         DefaultValues[h] = DefaultValues[head] /. head :> h;
         SetAttributes[h, DeleteCases[Attributes[head], Orderless]];
         MapMatchValues[
             ReplaceAll[h :> head],
-            MapMatchPart[
-                Replace[MatchPart[{1}, _, match_] :> match],
-                PatternMatch[Unevaluated[h[args]], Unevaluated[h[OrderlessPatternSequence[patt]]]]
-            ]
+            patternMatch[Unevaluated[h[args]], Unevaluated[h[OrderlessPatternSequence[patt]]]]
         ]
     ]
 
 
-(* Shortest *)
-
-PatternMatch[Sequence[args___], Verbatim[Shortest][patt_]] :=
-    PatternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[Shortest[patt]]]]
-
-PatternMatch[head_Symbol[args___], head_Symbol[left___, mid : Verbatim[Shortest][patt_], right___]] := With[{
-    l = Length[Hold[left]], r = Length[Hold[right]]
-},
-    LazyMap[Apply[
-        If[ l == 0 && Length[#1] > 0 || r == 0 && Length[#3] > 0,
-            MatchSum[],
-            MatchProduct[
-                If[ l == 0,
-                    MatchProduct[],
-                    ShiftPatternMatch[#1, Unevaluated[head[left]]]
-                ],
-                MatchPart[{l + 1},
-                    HoldPattern[mid],
-                    ShiftPatternMatch[#2, Unevaluated[head[patt]], l]
-                ],
-                If[ r == 0,
-                    MatchProduct[],
-                    ShiftPatternMatch[#3, Unevaluated[head[right]], l + 1]
-                ]
-            ]
-        ] &
-    ],
-        ShortestTriples[HoldComplete[args]]
-    ]
-]
-
-
-(* Longest *)
-
-PatternMatch[Sequence[args___], Verbatim[Longest][patt_]] :=
-    PatternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[Longest[patt]]]]
-
-PatternMatch[head_Symbol[args___], head_Symbol[left___, mid : Verbatim[Longest][patt_], right___]] := With[{
-    l = Length[HoldComplete[left]], r = Length[HoldComplete[right]]
-},
-    LazyMap[Apply[
-        If[ l == 0 && Length[#1] > 0 || r == 0 && Length[#3] > 0,
-            MatchSum[],
-            MatchProduct[
-                If[ l == 0,
-                    MatchProduct[],
-                    ShiftPatternMatch[#1, Unevaluated[head[left]]]
-                ],
-                MatchPart[{l + 1},
-                    HoldPattern[mid],
-                    ShiftPatternMatch[#2, Unevaluated[head[patt]], l]
-                ],
-                If[ r == 0,
-                    MatchProduct[],
-                    ShiftPatternMatch[#3, Unevaluated[head[right]], l + 1]
-                ]
-            ]
-        ] &
-    ],
-        LongestTriples[HoldComplete[args]]
-    ]
-]
-
-
 (* OrderlessPatternSequence *)
 
-PatternMatch[Sequence[args___], Verbatim[OrderlessPatternSequence][patt___]] :=
-    PatternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[OrderlessPatternSequence[patt]]]]
+patternMatch[Sequence[args___], Verbatim[OrderlessPatternSequence][patt___]] :=
+    patternMatch[Unevaluated[HoldComplete[args]], Unevaluated[HoldComplete[OrderlessPatternSequence[patt]]]]
 
-PatternMatch[arg_, Verbatim[OrderlessPatternSequence][patt___]] :=
-    PatternMatch[Unevaluated[Sequence[arg]], Unevaluated[Sequence[OrderlessPatternSequence[patt]]]]
+patternMatch[arg_, Verbatim[OrderlessPatternSequence][patt___]] :=
+    patternMatch[Unevaluated[HoldComplete[arg]], Unevaluated[HoldComplete[OrderlessPatternSequence[patt]]]]
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[OrderlessPatternSequence][patt___], right___]] :=
-    LazyMap[Apply[
-        MatchProduct[
-            MatchPart[{1}, HoldPattern[left],
-                LazyMap[
-                    ShiftPatternMatch[#, Unevaluated[head[patt]]] &,
-                    ToLazyList[LazyPermutations[#1], MatchSum]
-                ]
-            ],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
-        ] &],
-		SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
-	]
-
-
-(* PatternSequence *)
-
-PatternMatch[Sequence[args___], Verbatim[PatternSequence][patt___]] :=
-    PatternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[patt]]]
-
-PatternMatch[arg_, Verbatim[PatternSequence][patt___]] :=
-    PatternMatch[Unevaluated[Sequence[arg]], Unevaluated[Sequence[patt]]]
-
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[PatternSequence][patt___], right___]] :=
-    LazyMap[Apply[
-        MatchProduct[
-            MatchPart[{1}, HoldPattern[left],
-                ShiftPatternMatch[#1, Unevaluated[head[patt]]]
-            ],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
-        ] &],
-		SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
-	]
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[OrderlessPatternSequence][patt___], right___]] :=
+    MatchPart[{}, HoldPattern[head[patt, right]],
+        LazyMap[Apply[{l, r} |->
+            LazyMap[
+                patternMatchShift[Join[#, r], Unevaluated[head[patt, right]]] &,
+                ToLazyList[LazyPermutations[l], MatchSum]
+            ]
+        ],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+    ]
+    ]
 
 
 (* Flat *)
+(* should be after OrderlessPatternSequence *)
 
-PatternMatch[head_Symbol[args___], head_Symbol[patt__]] /; MemberQ[Attributes[head], Flat] := Module[{h},
+patternMatch[head_Symbol[args___], head_Symbol[patt__]] /; MemberQ[Attributes[head], Flat] := Module[{h},
     DefaultValues[h] = DefaultValues[head] /. head :> h;
     SetAttributes[h, DeleteCases[Attributes[head], Flat]];
     MatchPart[{}, HoldPattern[head[patt]], MapMatchValues[
         ReplaceAll[h :> head],
         LazyMap[
-            With[{v = If[MemberQ[Attributes[head], OneIdentity], flattenIdentities, Identity][h @@@ HoldComplete @@ Flatten /@ HoldComplete @@@ Normal[#]]},
+            With[{v = If[MemberQ[Attributes[head], OneIdentity], FlattenIdentities, Identity][h @@@ HoldComplete @@ Flatten /@ HoldComplete @@@ Normal[#]]},
                 (* EchoFunction[ResourceFunction["PrettyForm"][{v, h[patt]}], MatchBindings /* Normal]@ *)
-                ShiftPatternMatch[v, Unevaluated[h[patt]]]
+                patternMatchShift[v, Unevaluated[h[patt]]]
             ] &,
             LazySplits[HoldComplete /@ Unevaluated[{args}], Length[HoldComplete[patt]], MatchSum]
         ]
@@ -221,32 +137,128 @@ PatternMatch[head_Symbol[args___], head_Symbol[patt__]] /; MemberQ[Attributes[he
 ]
 
 
+(* PatternSequence *)
+
+patternMatch[Sequence[args___], Verbatim[PatternSequence][patt___]] :=
+    patternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[patt]]]
+
+patternMatch[arg_, Verbatim[PatternSequence][patt___]] :=
+    patternMatch[Unevaluated[Sequence[arg]], Unevaluated[Sequence[patt]]]
+
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[PatternSequence][patt___], right___]] :=
+    MatchPart[{}, HoldPattern[head[patt, right]],
+        LazyMap[Apply[{l, r} |->
+            patternMatchShift[Join[l, r], Unevaluated[head[patt, right]]]
+        ],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+    ]
+    ]
+
+
+(* Shortest *)
+
+patternMatch[Sequence[args___], Verbatim[Shortest][patt_]] :=
+    patternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[Shortest[patt]]]]
+
+patternMatch[head_Symbol[args___], head_Symbol[left___, mid : Verbatim[Shortest][patt_], right___]] := With[{
+    l = Length[Hold[left]], r = Length[Hold[right]]
+},
+    MatchPart[
+        {},
+        HoldPattern[head[left, mid, right]],
+        LazyMap[Apply[
+            If[ l == 0 && Length[#1] > 0 || r == 0 && Length[#3] > 0,
+                MatchSum[],
+                MatchProduct[
+                    If[ l == 0,
+                        MatchProduct[],
+                        patternMatchShift[#1, Unevaluated[head[left]]]
+                    ],
+                    MatchPart[{l + 1},
+                        HoldPattern[mid],
+                        patternMatchShift[#2, Unevaluated[head[patt]], l]
+                    ],
+                    If[ r == 0,
+                        MatchProduct[],
+                        patternMatchShift[#3, Unevaluated[head[right]], l + 1]
+                    ]
+                ]
+            ] &
+        ],
+            ShortestTriples[HoldComplete[args]]
+        ]
+    ]
+]
+
+
+(* Longest *)
+
+patternMatch[Sequence[args___], Verbatim[Longest][patt_]] :=
+    patternMatch[Unevaluated[Sequence[args]], Unevaluated[Sequence[Longest[patt]]]]
+
+patternMatch[head_Symbol[args___], head_Symbol[left___, mid : Verbatim[Longest][patt_], right___]] := With[{
+    l = Length[HoldComplete[left]], r = Length[HoldComplete[right]]
+},
+    MatchPart[
+        {},
+        HoldPattern[head[left, mid, right]],
+        LazyMap[Apply[
+            If[ l == 0 && Length[#1] > 0 || r == 0 && Length[#3] > 0,
+                MatchSum[],
+                MatchProduct[
+                    If[ l == 0,
+                        MatchProduct[],
+                        patternMatchShift[#1, Unevaluated[head[left]]]
+                    ],
+                    MatchPart[{l + 1},
+                        HoldPattern[mid],
+                        patternMatchShift[#2, Unevaluated[head[patt]], l]
+                    ],
+                    If[ r == 0,
+                        MatchProduct[],
+                        patternMatchShift[#3, Unevaluated[head[right]], l + 1]
+                    ]
+                ]
+            ] &
+        ],
+            LongestTriples[HoldComplete[args]]
+        ]
+    ]
+]
+
+
 (* Pattern *)
 
-PatternMatch[expr_, patt : Verbatim[Pattern][_Symbol, subPatt_]] :=
-	MatchPart[{}, HoldPattern[patt], PatternMatch[Unevaluated[expr], Unevaluated[subPatt]]]
+patternMatch[expr_, patt : Verbatim[Pattern][_Symbol, subPatt_]] :=
+	MatchPart[{}, HoldPattern[patt], patternMatch[Unevaluated[expr], Unevaluated[subPatt]]]
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Pattern][_Symbol, patt_], right___]] :=
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Pattern][name_Symbol, patt_], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
     LazyMap[Apply[
         MatchProduct[
             MatchPart[{1},
-                HoldPattern[left],
-                ShiftPatternMatch[#1, Unevaluated[head[patt]], True]
+                Pattern @@@ If[MatchQ[Unevaluated[patt], _PatternSequence], FlattenAt[{1, 2}], Identity] @
+                    HoldPattern[Hold[name, PatternSequence[patt]]],
+                patternMatchShift[#1, Unevaluated[head[patt]]]
             ],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
         ] &],
         SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
     ]
+]
 
 
 (* Blank *)
 
-PatternMatch[expr_, Verbatim[Blank][]] := MatchValues[expr]
+patternMatch[expr_, Verbatim[Blank][]] := MatchValues[expr]
 
-PatternMatch[expr_, Verbatim[Blank][h_]] := With[{head = Unevaluated @@ Head[Unevaluated[expr], HoldComplete]},
-	MatchProduct[PatternMatch[head, h], MatchValues[expr]]]
+patternMatch[expr_, Verbatim[Blank][h_]] := With[{head = Unevaluated @@ Head[Unevaluated[expr], HoldComplete]},
+	MatchProduct[patternMatch[head, h], MatchValues[expr]]]
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Blank][h___], right___]] :=
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Blank][h___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
     LazyMap[Apply[
         MatchProduct[
             MatchPart[{1},
@@ -257,76 +269,86 @@ PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Blank][h___], rig
                     MatchValues
                 ]
             ],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
         ] &],
         If[ MemberQ[Attributes[head], Flat], Identity, LazySelect[#, MatchQ[#[[1]], HoldComplete[_h]] &] &] @
-            SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+            LazyRotateLeft @ SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
     ]
+]
 
 
 (* BlankSequence *)
 
-PatternMatch[Sequence[args___], Verbatim[BlankSequence][h___]] :=
+patternMatch[Sequence[args___], Verbatim[BlankSequence][h___]] :=
     If[ MatchQ[HoldComplete[args], HoldComplete[__h]],
 	    MatchValues[Sequence[args]],
         MatchSum[]
     ]
 
-PatternMatch[arg_, Verbatim[BlankSequence][h___]] :=
+patternMatch[arg_, Verbatim[BlankSequence][h___]] :=
     If[ MatchQ[HoldComplete[arg], HoldComplete[_h]],
 	    MatchValues[arg],
         MatchSum[]
     ]
 
-PatternMatch[head_Symbol[args__], head_Symbol[left : Verbatim[BlankSequence][h___], right___]] :=
+patternMatch[head_Symbol[args__], head_Symbol[left : Verbatim[BlankSequence][h___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
 	LazyMap[Apply[
         MatchProduct[
             MatchPart[{1}, HoldPattern[left], HoldApply[Sequence, #1, MatchValues]],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
         ] &],
 		LazySelect[
 			SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0],
 			MatchQ[#[[1]], HoldComplete[__h]] &
 		]
 	]
+]
 
 
 (* BlankNullSequence *)
 
-PatternMatch[Sequence[args___], Verbatim[BlankNullSequence][h___]] :=
+patternMatch[Sequence[args___], Verbatim[BlankNullSequence][h___]] :=
     If[ MatchQ[HoldComplete[args], HoldComplete[___h]],
 	    MatchValues[Sequence[args]],
         MatchSum[]
     ]
 
-PatternMatch[arg_, Verbatim[BlankNullSequence][h___]] :=
+patternMatch[arg_, Verbatim[BlankNullSequence][h___]] :=
     If[ MatchQ[HoldComplete[arg], HoldComplete[_h]],
 	    MatchValues[arg],
         MatchSum[]
     ]
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[BlankNullSequence][h___], right___]] :=
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[BlankNullSequence][h___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
 	LazyMap[Apply[
         MatchProduct[
             MatchPart[{1}, HoldPattern[left], HoldApply[Sequence, #1, MatchValues]],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
         ] &],
 		LazySelect[
 			SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0],
 			MatchQ[#[[1]], HoldComplete[___h]] &
 		]
 	]
+]
 
 
 (* RepeatedNull *)
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[RepeatedNull][patt_, spec_ : Infinity], right___]] := With[{
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[RepeatedNull][patt_, spec_ : Infinity], right___]] := With[{
     min = Replace[spec, {{k_} :> k, {min_, _} :> min, _ -> 0}],
     max = Replace[spec, {{k_} :> k, {_, max_} :> max}]
 },
 With[{
     numRepeats = max - min + 1
 },
+    MatchPart[
+    {},
+    HoldPattern[head[left, right]],
 	LazyMap[
         Apply[{l, r} |->
             ToLazyList[
@@ -361,15 +383,15 @@ With[{
                                             ]
                                         ],
                                         (* EchoFunction[{l, r, head[right], i}, Normal @* MatchBindings]@ *)
-                                        ShiftPatternMatch[r, Unevaluated[head[right]], Max[i - 1, 0]]
+                                        patternMatchShift[r, Unevaluated[head[right]], 1]
                                     ],
                                     #[[2]], #[[3]] + 1}], LazyList[]],
                                 (* last iteration but input is not empty *)
                                 i == numRepeats,
                                 LazyList[],
                                 True,
-                                Block[{subst = LazyListToList @ MatchExpand @ PatternMatch[val, p]}, LazySelect[# =!= Nothing &] @ LazyMap[
-                                    With[{next = HoldComplete @@ Lookup[ReleaseLazyValue @ LazyFirst[MatchBindings[#], <||>], rest, Null, Hold]},
+                                Block[{subst = LazyListToList @ MatchExpand @ patternMatch[val, p]}, LazySelect[# =!= Nothing &] @ LazyMap[
+                                    With[{next = HoldComplete @@ Lookup[ReleaseLazyValue @ LazyFirst[MatchBindings[#], {}], HoldPattern[rest], Null, Hold]},
                                         If[ next =!= Null && Length[next] <= len,
                                             {
                                                 MatchProduct[
@@ -378,7 +400,8 @@ With[{
                                                         Replace[{
                                                             (* replace with dummy sequence *)
                                                             MatchPart[{restPos}, __] -> MatchProduct[],
-                                                            MatchPart[{p_, ps___}, rest___] :> MatchPart[{If[i == 0, p, i], ps}, rest]
+                                                            MatchPart[{p_, ps___}, rest___] :> MatchPart[{If[i == 0, p, i], ps}, rest],
+                                                            MatchPart[{}, _, m_] :> m
                                                         }],
                                                         #
                                                     ]
@@ -407,44 +430,91 @@ With[{
         ],
         SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
     ]
-]]
+]]]
 
 
 (* Repeated *)
 
-PatternMatch[head_Symbol[args___], head_Symbol[Verbatim[Repeated][patt_, spec_ : Infinity], right___]] := With[{
+patternMatch[head_Symbol[args___], head_Symbol[Verbatim[Repeated][patt_, spec_ : Infinity], right___]] := With[{
     newSpec = Replace[spec, {k : Except[_List] :> {1, k}}]
 },
-    PatternMatch[Unevaluated[head[args]], Unevaluated[head[RepeatedNull[patt, newSpec], right]]]
+    patternMatch[Unevaluated[head[args]], Unevaluated[head[RepeatedNull[patt, newSpec], right]]]
+]
+
+
+(* AlternativesSequence *)
+
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[AlternativesSequence][patt___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
+    LazyMap[
+        Apply[MatchProduct[
+            MatchPart[{1},
+                HoldPattern[left],
+                With[{holdPatt = head @@@ Hold[Evaluate @ Flatten[Hold @@ Table[Hold[Alternatives[patt]], Length[#1]]]]},
+                    MatchPart[{}, PatternSequence @@@ HoldPattern @@ holdPatt,
+                        With[{p = Unevaluated @@ holdPatt},
+                            patternMatchShift[#1, p]
+                        ]
+                    ]
+                ]
+            ],
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
+        ] &],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+    ]
+]
+
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[DefaultAlternativesSequence][patt___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
+    LazyMap[
+        Apply[MatchProduct[
+            MatchPart[{1},
+                HoldPattern[left],
+                With[{holdPatt = head @@@ Hold[Evaluate @ Flatten[Hold @@ Table[Hold[DefaultAlternatives[patt]], Length[#1]]]]},
+                    MatchPart[{}, HoldPattern @@ holdPatt,
+                        With[{p = Unevaluated @@ holdPatt},
+                            patternMatchShift[#1, p]
+                        ]
+                    ]
+                ]
+            ],
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
+        ] &],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+    ]
 ]
 
 
 (* HoldPattern *)
 
-PatternMatch[expr_, Verbatim[HoldPattern][patt_]] := PatternMatch[Unevaluated[expr], Unevaluated[patt]]
+patternMatch[expr_, patt : Verbatim[HoldPattern][p_]] := patternMatch[Unevaluated[expr], Unevaluated[p]]
 
 
 (* Verbatim *)
 
-PatternMatch[expr_, Verbatim[Verbatim][expr_]] := MatchValues[expr]
+patternMatch[expr_, Verbatim[Verbatim][expr_]] := MatchValues[expr]
 
 
 (* Except *)
 
-PatternMatch[expr_, Verbatim[Except][patt_, t___]] :=
+patternMatch[expr_, Verbatim[Except][patt_, t___]] :=
     If[ !PatternMatchQ[Unevaluated[expr], Unevaluated[patt]],
 		MatchProduct[
             MatchDefault[Unevaluated[patt]],
             If[ HoldComplete[t] === HoldComplete[],
                 MatchValues[expr],
-                PatternMatch[Unevaluated[expr], Unevaluated[t]]
+                patternMatch[Unevaluated[expr], Unevaluated[t]]
             ]
         ],
 		MatchSum[]
 	]
 
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Except][patt_, t___], right___]] :=
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Except][patt_, t___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
 	LazyMap[Apply[
         MatchProduct[
             MatchPart[{1},
@@ -455,123 +525,268 @@ PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Except][patt_, t_
                             MatchDefault[Unevaluated[head[patt]]],
                             If[ HoldComplete[t] === HoldComplete[],
                                 Sequence @@@ MatchValues[#1],
-                                ShiftPatternMatch[#1, Unevaluated[head[t]], True]
+                                patternMatchShift[#1, Unevaluated[head[t]], True]
                             ]
                         ],
                         MatchSum[]
                     ]
                 ]
             ],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
         ] &],
         SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
     ]
+]
 
 
 (* Alternatives *)
 
-PatternMatch[expr_, patt : Verbatim[Alternatives][alts___]] :=
+patternMatch[expr_, patt : Verbatim[Alternatives][alts___]] :=
     LazyMap[
-        Function[alt, MatchPart[{}, HoldPattern[patt], PatternMatch[Unevaluated[expr], Unevaluated[alt]]], HoldAll],
+        Function[alt, MatchPart[{}, HoldPattern[patt], patternMatch[Unevaluated[expr], Unevaluated[alt]]], HoldAll],
         MatchSum[alts]
     ]
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Alternatives][alts___], right___]] :=
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Alternatives][alts___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
     LazyMap[Apply[MatchProduct[
         MatchPart[{1},
             HoldPattern[left],
             LazyMap[
-                Function[alt, ShiftPatternMatch[#1, Unevaluated[head[alt]], True], HoldAllComplete],
+                Function[alt, patternMatchShift[#1, Unevaluated[head[alt]], True], HoldAll],
                 MatchSum[alts]
             ]
         ],
-        ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
-    ] &], SequenceSplits[HoldComplete[args]]
+        patternMatchShift[#2, Unevaluated[head[right]], 1]
+    ] &
+    ],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
     ]
+]
+
+
+(* DefaultAlternatives *)
+
+patternMatch[expr_, patt : Verbatim[DefaultAlternatives][alts___]] :=
+    LazyMap[
+        With[{alt = Unevaluated @@ Extract[HoldComplete[alts], #, HoldComplete], rest = Drop[HoldComplete[alts], {#}]},
+            MatchPart[{}, HoldPattern[patt],
+                MatchProduct[
+                    With[{names = Cases[alt, Verbatim[Pattern][name_Symbol, _] :> name, All]},
+                        MatchPart[{}, head @@@ HoldPattern[rest],
+                            MapMatchPart[
+                                Replace[MatchPart[_, _[Verbatim[Pattern][name_Symbol, _]], _] /; MemberQ[names, name] :> MatchProduct[]],
+                                MatchDefault[rest]
+                            ]
+                        ]
+                    ],
+                    patternMatch[Unevaluated[expr], alt]
+                ]
+            ]
+         ] &,
+        LazyRange[Length[Unevaluated[patt]], MatchSum]
+    ]
+
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[DefaultAlternatives][alts___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
+    LazyMap[Apply[MatchProduct[
+        LazyMap[
+            Function[n, With[{
+                alt = Unevaluated @@ head /@ Extract[HoldComplete[alts], n, HoldComplete],
+                rest = Drop[HoldComplete[alts], {n}]
+            },
+                MatchProduct[
+                    MatchPart[{1},
+                        HoldPattern[left],
+                        MatchProduct[
+                            With[{names = Cases[alt, Verbatim[Pattern][name_Symbol, _] :> name, All]},
+                                MatchPart[{}, PatternSequence @@@ HoldPattern[rest],
+                                    MapMatchPart[
+                                        Replace[MatchPart[_, _[Verbatim[Pattern][name_Symbol, _]], match_] /; MemberQ[names, name] :> match],
+                                        MatchDefault[rest]
+                                    ]
+                                ]
+                            ],
+                            patternMatchShift[#1, alt, True]
+                        ]
+                    ]
+                ]
+            ]],
+            LazyRange[Length[Unevaluated[left]], MatchSum]
+        ],
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
+    ] &
+    ],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+    ]
+]
 
 
 
 (* Optional *)
 
-PatternMatch[expr_, Verbatim[Optional][patt_, def___]] := MatchSum[
-    PatternMatch[Unevaluated[expr], Unevaluated[patt]],
-    MatchPart[
-        {},
-        Replace[HoldPattern[patt], Verbatim[HoldPattern][Verbatim[Optional][p_Pattern, ___]] :> HoldPattern[p]],
-        If[HoldComplete[def] === HoldComplete[], MatchValues[Sequence[]], MatchValues[def]]
-    ],
-    MatchDefault[Unevaluated[patt]]
+patternMatch[expr_, patt : Verbatim[Optional][subPatt_, def___]] := MatchPart[
+    {},
+    HoldPattern[patt],
+    MatchSum[
+        patternMatch[Unevaluated[expr], Unevaluated[subPatt]],
+        MatchDefault[Unevaluated[patt]]
+    ]
 ]
 
 
-PatternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Optional][patt_, def___], right___]] :=
-	LazyMap[Apply[
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[Optional][patt_, def___], right___]] := MatchPart[
+    {},
+    HoldPattern[head[left, right]],
+	LazyMap[Apply[MatchSum[
         MatchProduct[
-            MatchSum[
-                MatchPart[
-                    {1},
-                    HoldPattern[left],
-                    ShiftPatternMatch[#1, Unevaluated[head[patt]], True]
-                ],
-                MatchDefault[Unevaluated[head[left]]]
+            MatchPart[
+                {1},
+                HoldPattern[left],
+                MatchSum[
+                    patternMatchShift[#1, Unevaluated[head[patt]], True],
+                    If[Length[#1] == 0, MatchDefault[Unevaluated[left]], MatchSum[]]
+                ]
             ],
-            ShiftPatternMatch[#2, Unevaluated[head[right]], 1]
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
+        ]
         ] &],
-        (* If[ MemberQ[Attributes[head], Flat], Identity, LazySelect[#, MatchQ[#[[1]], HoldComplete[_]] &] &] @ *)
+        If[Length[HoldComplete[args]] > 0, ReleaseLazyValue @ LazyJoin[LazyReverse[LazyTake[#, 2]], LazyDrop[#, 2]] &, Identity] @
             SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
     ]
+]
 
 
 (* Condition *)
 
-PatternMatch[expr_, Verbatim[Condition][patt_, cond_]] :=
-	LazySelect[MatchExpand @ PatternMatch[Unevaluated[expr], Unevaluated[patt]], ReplaceAll[Unevaluated[cond], ReleaseLazyValue @ LazyFirst[MatchBindings[#], {}]] &]
+patternMatch[expr_, Verbatim[Condition][patt_, cond_]] :=
+	LazySelect[MatchExpand @ patternMatch[Unevaluated[expr], Unevaluated[patt]], ReplaceAll[Unevaluated[cond], ReleaseLazyValue @ LazyFirst[MatchBindings[#], {}]] &]
 
 
 (* PatternTest *)
 
-PatternMatch[expr_, Verbatim[PatternTest][patt_, test_]] :=
-	LazySelect[MatchExpand @ PatternMatch[Unevaluated[expr], Unevaluated[patt]], test @@ ReleaseLazyValue @ LazyFirst[MatchApply[patt, #], Unevaluated[patt]] &]
+patternMatch[expr_, Verbatim[PatternTest][patt_, test_]] :=
+	LazySelect[MatchExpand @ patternMatch[Unevaluated[expr], Unevaluated[patt]], test @@ ReleaseLazyValue @ LazyFirst[MatchApply[patt, #], Unevaluated[patt]] &]
+
+
+(* OptionsPattern *)
+
+RepeatedFlatten[expr_] := FixedPoint[FlattenAt[#, Position[#, _List, {1}, Heads -> False]] &, expr]
+
+patternMatch[head_Symbol[args___], head_Symbol[left_OptionsPattern, right___]] := With[{
+    defaultOpts = Replace[left, {_[] :> Options[head], _[sym_Symbol]:> Options[sym], _[rules : {(_Rule | _RuleDelayed)...}] :> rules, _ :> {}}]
+},
+    MatchPart[
+        {},
+        HoldPattern[PatternSequence[left, right]],
+        LazyMap[
+            Apply[
+                MatchProduct[
+                    MatchPart[{1},
+                        HoldPattern[left],
+                        With[{rules = Unevaluated @@ List @@@ (HoldComplete[#] &)[Hold /@ RepeatedFlatten[Append[#1, defaultOpts]]]},
+                            If[ MatchQ[rules, {Hold[(_Rule | _RuleDelayed)]...}],
+                                LazyMap[
+                                    opts |-> LazyMap[opt |-> Replace[opt, {
+                                        Hold[(Rule | RuleDelayed)[key_, value_]] :>
+                                            MatchPart[{}, HoldPattern[OptionValue[key]], MatchValues[value]],
+                                        _ -> MatchSum[]
+                                    }],
+                                        MatchSum @@ opts
+                                    ],
+                                    MatchProduct @@ GatherBy[rules, #[[1, 1]] &]
+                                ],
+                                MatchSum[]
+                            ]
+                        ]
+                    ],
+                    patternMatchShift[#2, Unevaluated[head[right]], 1]
+                ] &
+            ],
+            SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+        ]
+    ]
+]
+
+
+(* KeyValuePattern *)
+
+patternMatch[expr_, Verbatim[KeyValuePattern][kvalues_]] := patternMatchShift[HoldComplete[expr], HoldComplete[KeyValuePattern[kvalues]], True]
+
+patternMatch[head_Symbol[args___], head_Symbol[left : Verbatim[KeyValuePattern][kvalues_], right___]] := MatchPart[
+    {},
+    HoldPattern[PatternSequence[left, right]],
+    LazyMap[
+        Apply[MatchProduct[
+            MatchPart[{1},
+                HoldPattern[left],
+                With[{rules = RepeatedFlatten[#1 /. assoc_Association :> RuleCondition[Normal[assoc]]]},
+                    If[ AllTrue[rules, MatchQ[_Rule | _RuleDelayed]],
+                        MatchPart[{},
+                            HoldPattern[rules],
+                            patternMatch[rules, Insert[OrderlessPatternSequence @@@ HoldComplete[kvalues], ___, {1, -1}]]
+                        ],
+                        MatchSum[]
+                    ]
+                ]
+            ],
+            patternMatchShift[#2, Unevaluated[head[right]], 1]
+        ] &],
+        SequenceSplits[HoldComplete[args], Length[HoldComplete[right]] == 0]
+    ]
+]
+
+
+(* IgnoringInactive *)
+
+patternMatch[Inactive[head_][args___], Verbatim[IgnoringInactive][patt_]] := patternMatch[Unevaluated[head[args]], Unevaluated[patt]]
+patternMatch[expr_, Verbatim[IgnoringInactive][patt_]] := patternMatch[Unevaluated[expr], Unevaluated[patt]]
 
 
 (* head cases *)
 
-PatternMatch[head_Symbol[], head_Symbol[]] := MatchProduct[]
-PatternMatch[head_Symbol[__], head_Symbol[]] := MatchSum[]
+patternMatch[head_Symbol[], head_Symbol[]] := MatchProduct[]
+patternMatch[head_Symbol[__], head_Symbol[]] := MatchSum[]
 
-(* PatternMatch[head_Symbol[Longest[same__], args___], head_Symbol[Longest[same__], patt___]] := With[{len = Length[HoldComplete[same]]},
+(* patternMatch[head_Symbol[Longest[same__], args___], head_Symbol[Longest[same__], patt___]] := With[{len = Length[HoldComplete[same]]},
     MatchProduct[
         MatchProduct @@ MapIndexed[Function[Null, MatchPart[#2, HoldPattern[#1], MatchValues[#1]], HoldAllComplete], Unevaluated[{same}]],
         MapMatchPart[
             Replace[MatchPart[{p : Except[0], part___}, rest___] :> MatchPart[{p + len, part}, rest]],
-            PatternMatch[Unevaluated[head[args]], Unevaluated[head[patt]]]
+            patternMatch[Unevaluated[head[args]], Unevaluated[head[patt]]]
         ]
     ]
 ] *)
 
-PatternMatch[head_Symbol[args___], head_Symbol[patt__]] := LazyMap[
+patternMatch[head_Symbol[args___], head_Symbol[patt__]] := MatchPart[{}, HoldPattern[head[patt]], LazyMap[
     MatchProduct @@ With[{vs = Flatten /@ HoldComplete @@@ Normal[#]},
         MapThread[
             With[{v = Unevaluated @@ #1, p = Unevaluated @@ #2},
                 (* EchoFunction[ResourceFunction["PrettyForm"][{v, h[patt]}], MatchBindings /* Normal]@ *)
-                MatchPart[{#3}, HoldPattern @@ #2, PatternMatch[v, p]]
+                MatchPart[{#3}, HoldPattern @@ #2, patternMatch[v, p]]
+                (* MatchPart[{#3}, HoldPattern @@ #2, MapMatchPart[Replace[MatchPart[{p : Except[0], ps___}, rest___] :> MatchPart[{p, ps}, rest]], patternMatch[v, p]]] *)
             ] &,
             {vs, List @@ HoldComplete /@ HoldComplete[patt], Range[Length[vs]]}
         ]
     ] &,
     LazySplits[HoldComplete /@ Unevaluated[{args}], Length[HoldComplete[patt]], MatchSum]
-]
+]]
 
-PatternMatch[head1_[args___], head2_[patt___]] := MatchProduct[
+patternMatch[head1_[args___], head2_[patt___]] := MatchProduct[
     MapMatchPart[
         Replace[MatchPart[part_, rest__] :> MatchPart[Prepend[part, 0], rest]],
-        PatternMatch[Unevaluated[head1], Unevaluated[head2]]
+        patternMatch[Unevaluated[head1], Unevaluated[head2]]
     ],
-    PatternMatch[HoldComplete[args], HoldComplete[patt]]
+    patternMatch[HoldComplete[args], HoldComplete[patt]]
 ]
 
-PatternMatch[expr_, expr_] := MatchValues[expr]
+patternMatch[expr_, expr_] := MatchValues[expr]
 
 
-PatternMatch[___] := MatchSum[]
+patternMatch[___] := MatchSum[]
+
+
+PatternMatch[expr_, patt_] := Match[patternMatch[Unevaluated[expr], Unevaluated[patt]]]
 

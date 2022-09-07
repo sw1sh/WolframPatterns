@@ -5,6 +5,7 @@ PackageScope["MergeIdentity"]
 PackageScope["MapValues"]
 PackageScope["UnevaluatedExtract"]
 PackageScope["UnevaluatedFirst"]
+PackageScope["UnevaluatedFlatten"]
 PackageScope["mosts"]
 PackageScope["rests"]
 PackageScope["splits"]
@@ -15,19 +16,18 @@ PackageScope["FoldTakeWhile"]
 
 HoldApply[f_, x_, g_ : Unevaluated] := g @@ f @@@ HoldComplete[x]
 
-MergeIdentity[as : {___Association}] := With[{merge = Merge[as, HoldComplete]},
-	Association @ MapThread[With[{v = Unevaluated @@ #2}, #1 :> v] &, {Keys[merge], FlattenAt[1] /@ Values[merge, HoldComplete]}]
+MergeIdentity[rules : {({(_Rule | _RuleDelayed)...} | _Association) ...}] := With[{merge = Merge[rules, HoldComplete]},
+	MapThread[With[{v = Unevaluated @@ #2}, #1 :> v] &, {Keys[merge], FlattenAt[1] /@ Values[merge, HoldComplete]}]
 ]
 
-MapValues[f_, a_Association] :=
-	Association @ MapThread[With[{v = Unevaluated @@ #2},
+MapValues[f_, a : {(_Rule | _RuleDelayed)...} | _Association] :=
+	MapThread[With[{v = Unevaluated @@ #2},
 		With[{w = Unevaluated @@ HoldComplete[Evaluate @ f[v]]}, #1 :> w]] &, {Keys[a], Values[a, HoldComplete]}
 	]
 MapValues[f_][a_] := MapValues[f, a]
 
 UnevaluatedExtract[expr_, pos_] := Unevaluated @@ Extract[Unevaluated @ expr, pos, HoldComplete]
 UnevaluatedFirst[expr_] := UnevaluatedExtract[Unevaluated @ expr, 1]
-
 
 mosts[expr_] := NestList[Most, expr, Length[expr]]
 rests[expr_] := NestList[Rest, expr, Length[expr]]
