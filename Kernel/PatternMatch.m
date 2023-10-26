@@ -842,11 +842,8 @@ patternMatch[head_Symbol[args___], head_Symbol[patt__]] := MatchPart[{}, HoldPat
 ], MatchSum]]
 
 patternMatch[head1_[args___], head2_[patt___]] := MatchProduct[
-    MapMatchPart[
-        Replace[MatchPart[part_, rest__] :> MatchPart[Prepend[part, 0], rest]],
-        patternMatch[Unevaluated[head1], Unevaluated[head2]]
-    ],
-    patternMatch[HoldComplete[args], HoldComplete[patt]]
+    MatchPart[{0}, HoldPattern[head2], patternMatch[Unevaluated[head1], Unevaluated[head2]]],
+    patternMatchShift[HoldComplete[args], HoldComplete[patt]]
 ]
 
 patternMatch[expr_, expr_] := MatchValues[expr]
