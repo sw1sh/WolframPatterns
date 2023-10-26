@@ -21,7 +21,7 @@ PackageExport["MatchExpand"]
 SetAttributes[MatchValues, {HoldAll, SequenceHold, Flat}]
 SetAttributes[MatchSum, {HoldAll, Flat}]
 SetAttributes[MatchProduct, {HoldAll, Flat}]
-
+Match
 
 MatchObjectQ[expr_] := MatchQ[Unevaluated[expr], _MatchSum | _MatchProduct | _MatchPart | _MatchValues | _Match]
 
@@ -52,7 +52,7 @@ MatchParts[matches_MatchProduct] :=
 
 MatchParts[matches_MatchSum] := LazyCatenate @ LazyMap[MatchParts, ToLazyList[matches]]
 
-MatchParts[LazyValue[v_]] := MatchParts[v]
+MatchParts[LazyValue[v_] | v_] := MatchParts[v]
 
 MatchParts[Match[m_]] := MatchParts[m]
 
@@ -82,7 +82,7 @@ MatchApply[patt_, matches_MatchProduct] :=
 
 MatchApply[patt_, matches_MatchSum] := LazyFold[LazyJoin[#1, MatchApply[Unevaluated[patt], #2]] &, LazyList[], matches]
 
-MatchApply[patt_, LazyValue[v_]] := MatchApply[Unevaluated[patt], v]
+MatchApply[patt_, LazyValue[v_] | v_] := MatchApply[Unevaluated[patt], v]
 
 MatchApply[patt_, Match[m_]] := MatchApply[patt, m]
 
@@ -124,7 +124,9 @@ MatchBindings[matches_MatchSum, opts___] := LazyCatenate @ LazyMap[MatchBindings
 MatchBindings[MatchValues[], ___] := LazyList[{}, LazyList[]]
 MatchBindings[values_MatchValues, ___] := LazyConstantArray[{}, Length[HoldComplete @@ values]]
 
-MatchBindings[LazyValue[match_], opts___] := MatchBindings[match, opts]
+MatchBindings[LazyValue[v_], opts___] := MatchBindings[v, opts]
+
+MatchBindings[___] := LazyList[]
 
 
 (* All MatchBindings *)
@@ -169,13 +171,11 @@ MatchExpand[matches_MatchProduct] :=
 	], *)
 
 
-MatchExpand[MatchPart[part_, patt_, match_]] := LazyMap[MatchPart[part, patt, #] &, MatchExpand[match]]
+MatchExpand[MatchPart[part_, patt_, match_]] := ToLazyList[LazyMap[MatchPart[part, patt, #] &, ToLazyList[MatchExpand[match]]], MatchSum]
 
 MatchExpand[MatchValues[]] := MatchSum[MatchProduct[]]
 
-MatchExpand[values_MatchValues] := MatchSum @@ MatchValues /@ values
-
-MatchExpand[LazyValue[x_]] := LazyValue[MatchExpand[x]]
+MatchExpand[values_MatchValues] := MatchSum @@ MatchValues /@ HoldComplete @@ values
 
 MatchExpand[Match[m_]] := Match[MatchExpand[m]]
 

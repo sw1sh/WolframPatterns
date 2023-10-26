@@ -7,6 +7,10 @@ PackageExport["AlternativesSequence"]
 PackageExport["DefaultAlternatives"]
 PackageExport["DefaultAlternativesSequence"]
 PackageExport["NameValuePattern"]
+PackageExport["DeepPattern"]
+PackageExport["DefaultOptionsPattern"]
+PackageExport["NestedNull"]
+PackageExport["Nested"]
 
 
 
@@ -39,12 +43,12 @@ MapMatchPart[f_, matches : _MatchSum | _MatchProduct] := LazyMap[MapMatchPart[f,
 MapMatchPart[f_, match : MatchPart[{}, p_, m_]] := f[MatchPart[{}, p, MapMatchPart[f, m]]]
 MapMatchPart[f_, match_MatchPart] := f[match]
 MapMatchPart[_, match_MatchValues] := match
-MapMatchPart[f_, LazyValue[v_]] := MapMatchPart[f, v]
+(* MapMatchPart[f_, LazyValue[v_] | v_] := MapMatchPart[f, v] *)
 
 MapMatchValues[f_, matches : _MatchSum | _MatchProduct] := LazyMap[MapMatchValues[f, #] &, matches]
 MapMatchValues[f_, MatchPart[part_, patt_, match_]] := MatchPart[part, f[patt], MapMatchValues[f, match]]
 MapMatchValues[f_, match_MatchValues] := f[match]
-MapMatchValues[f_, LazyValue[v_]] := MapMatchValues[f, v]
+(* MapMatchValues[f_, LazyValue[v_] | v_] := MapMatchValues[f, v] *)
 
 
 FlattenIdentities[expr_] := FlattenAt[expr, Position[expr, _[_], {1}, Heads -> False]]
@@ -675,8 +679,9 @@ patternMatch[expr_, Verbatim[PatternTest][patt_, test_]] :=
 
 RepeatedFlatten[expr_] := FixedPoint[FlattenAt[#, Position[#, _List, {1}, Heads -> False]] &, expr]
 
-patternMatch[head_Symbol[args___], head_Symbol[left_OptionsPattern, right___]] := With[{
-    defaultOpts = Replace[left, {_[] :> Options[head], _[sym_Symbol]:> Options[sym], _[rules : {(_Rule | _RuleDelayed)...}] :> rules, _ :> {}}]
+patternMatch[head_Symbol[args___], head_Symbol[left : _OptionsPattern | _DefaultOptionsPattern, right___]] := With[{
+    defaultOpts = Replace[left, {_[] :> Options[head], _[sym_Symbol]:> Options[sym], _[rules : {(_Rule | _RuleDelayed)...}] :> rules, _ :> {}}],
+    pattHead = Head[left]
 },
     MatchPart[
         {},
@@ -686,7 +691,18 @@ patternMatch[head_Symbol[args___], head_Symbol[left_OptionsPattern, right___]] :
                 MatchProduct[
                     MatchPart[{1},
                         HoldPattern[left],
-                        With[{rules = Unevaluated @@ List @@@ (HoldComplete[#] &)[Hold /@ RepeatedFlatten[Append[#1, defaultOpts]]]},
+                        With[{rules = Unevaluated @@ List @@@ (HoldComplete[#] &)[Hold /@
+                            If[
+                                pattHead === OptionsPattern,
+                                RepeatedFlatten[Append[#1, defaultOpts]],
+                                With[{opts = RepeatedFlatten[#1]},
+                                    If[ AllTrue[opts[[All, 1]], Function[Null, MemberQ[Keys[defaultOpts], Unevaluated[#]], HoldAllComplete]],
+                                        Join[opts, HoldComplete @@ defaultOpts],
+                                        HoldComplete[Missing[]]
+                                    ]
+                                ]
+                            ]
+                        ]},
                             If[ MatchQ[rules, {Hold[(_Rule | _RuleDelayed)]...}],
                                 LazyMap[
                                     opts |-> LazyMap[opt |-> Replace[opt, {
@@ -745,6 +761,57 @@ patternMatch[Inactive[head_][args___], Verbatim[IgnoringInactive][patt_]] := pat
 patternMatch[expr_, Verbatim[IgnoringInactive][patt_]] := patternMatch[Unevaluated[expr], Unevaluated[patt]]
 
 
+(* DeepPattern *)
+
+patternMatch[expr_, Verbatim[DeepPattern][patt_]] := patternMatch[Unevaluated[expr], Unevaluated[patt]]
+
+patternMatch[expr : (head : Except[Sequence])[args___], Verbatim[DeepPattern][patt_]] := MatchPart[{}, HoldPattern[DeepPattern[patt]],
+    MatchSum[
+        patternMatch[Unevaluated[args], Unevaluated[DeepPattern[patt]]],
+        patternMatch[Unevaluated[head], Unevaluated[DeepPattern[patt]]],
+        patternMatch[Unevaluated[expr], Unevaluated[patt]]
+    ]
+]
+
+
+(* NestedNull *)
+
+patternMatch[expr_, Verbatim[NestedNull][patt_, spec_ : Infinity, lvl_ : 1]] := With[{
+    min = Replace[spec, {{k_} :> k, {min_, _} :> min, _ -> 0}],
+    max = Replace[spec, {{k_} :> k, {_, max_} :> max}]
+},
+    If[ max >= min,
+        If[ Length[Unevaluated[expr]] > 0,
+            With[{arg = Unevaluated @@ Extract[Unevaluated[expr], {1}, HoldComplete]},
+                MatchProduct[
+                    MatchPart[{}, HoldPattern[patt], patternMatch[Unevaluated[expr], Unevaluated[patt]]],
+                    MatchPart[{1}, HoldPattern[NestedNull[patt, spec]], patternMatch[arg, Unevaluated[NestedNull[patt, spec, lvl + 1]]]]
+                ]
+            ],
+            If[0 < min <= lvl <= max, patternMatch[Unevaluated[expr], Unevaluated[patt]], If[min == 0, MatchValues[expr], MatchSum[]]]
+        ],
+        MatchSum[]
+    ]
+]
+
+
+(* Nested *)
+
+patternMatch[expr_, Verbatim[Nested][patt_, spec_ : Infinity]] := With[{
+    newSpec = Replace[spec, {k : Except[_List] :> {1, k}}]
+},
+    patternMatch[Unevaluated[expr], Unevaluated[NestedNull[patt, newSpec]]]
+]
+
+
+(* LazyValue *)
+
+patternMatch[LazyValue[v_], patt_] := MapMatchValues[
+    Replace[values_MatchValues :> Map[LazyValue, values]],
+    patternMatch[Unevaluated[v], Unevaluated[patt]]
+]
+
+
 (* head cases *)
 
 patternMatch[head_Symbol[], head_Symbol[]] := MatchProduct[]
@@ -760,7 +827,7 @@ patternMatch[head_Symbol[__], head_Symbol[]] := MatchSum[]
     ]
 ] *)
 
-patternMatch[head_Symbol[args___], head_Symbol[patt__]] := MatchPart[{}, HoldPattern[head[patt]], LazyMap[
+patternMatch[head_Symbol[args___], head_Symbol[patt__]] := MatchPart[{}, HoldPattern[head[patt]], ToLazyList[LazyMap[
     MatchProduct @@ With[{vs = Flatten /@ HoldComplete @@@ Normal[#]},
         MapThread[
             With[{v = Unevaluated @@ #1, p = Unevaluated @@ #2},
@@ -771,8 +838,8 @@ patternMatch[head_Symbol[args___], head_Symbol[patt__]] := MatchPart[{}, HoldPat
             {vs, List @@ HoldComplete /@ HoldComplete[patt], Range[Length[vs]]}
         ]
     ] &,
-    LazySplits[HoldComplete /@ Unevaluated[{args}], Length[HoldComplete[patt]], MatchSum]
-]]
+    LazySplits[HoldComplete /@ Unevaluated[{args}], Length[HoldComplete[patt]]]
+], MatchSum]]
 
 patternMatch[head1_[args___], head2_[patt___]] := MatchProduct[
     MapMatchPart[

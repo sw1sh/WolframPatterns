@@ -25,22 +25,31 @@ PatternMatchQ[expr_, patt_] := PatternMatchQ[PatternMatch[Unevaluated[expr], Une
 PatternMatchQ[patt_][expr_] := PatternMatchQ[expr, patt]
 
 
-MatchReplace[expr_, (Rule | RuleDelayed)[lhs_, rhs_], lvl_ : {0}] := Map[
+MatchReplace[expr_, {}, ___] := expr
+
+MatchReplace[expr_, {(Rule | RuleDelayed)[lhs_, rhs_], rules___}, lvl_ : {0}] := Map[
     Function[
         subExpr,
-        Quiet[Check[ReplaceAll[Unevaluated[rhs], ReleaseLazyValue[LazyFirst[MatchBindings[PatternMatch[Unevaluated[subExpr], Unevaluated[lhs]]]]] /. Verbatim[Sequence][x_] :> x], subExpr, Lazy::undef], Lazy::undef],
+        Quiet[
+            ResourceFunction["CheckReturn"][
+                ReplaceAll[Unevaluated[rhs], ReleaseLazyValue[LazyFirst[MatchBindings[PatternMatch[Unevaluated[subExpr], Unevaluated[lhs]]]]] /. Verbatim[Sequence][x_] :> x],
+                MatchReplace[Unevaluated[subExpr], Unevaluated[{rules}]],
+                Lazy::undef
+            ],
+            Lazy::undef
+        ],
         HoldAll
     ],
     Unevaluated[expr],
     lvl
 ]
 
-MatchReplace[expr_, rules_List, lvl_ : {0}] :=
-    Fold[Function[rule, MatchReplace[Unevaluated[expr], Unevaluated[rule], lvl], HoldAll], Unevaluated[rules]]
+MatchReplace[expr_, rule : _Rule | _RuleDelayed, lvl_ : {0}] :=
+    MatchReplace[Unevaluated[expr], Unevaluated[{rule}], lvl]
 
 MatchReplace[rules_][expr_] := MatchReplace[Unevaluated[expr], Unevaluated[rules]]
 
-MatchReplace[match_ ? MatchObjectQ, rhs_] := ReplaceAll[Unevaluated[rhs], Normal[LazyTake[MatchBindings[match], 1]] /. Verbatim[Sequence][x_] :> x]
+MatchReplace[match_ ? MatchObjectQ, rhs_] := ReplaceAll[Unevaluated[rhs], Normal[LazyFirst[MatchBindings[match], {}]] /. (Sequence | LazyValue)[x_] :> x]
 
 
 MatchReplaceList[match_ ? MatchObjectQ, rhs_] := LazyMap[ReplaceAll[Unevaluated[rhs], # /. Verbatim[Sequence][x_] :> x] &, MatchBindings[match]]
